@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>Vertex AI Chat — Remote</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    background: #0b0f19; color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    width: min(92vw, 430px);
+    background: #131c2e;
+    border: 1px solid #263554;
+    border-radius: 18px;
+    padding: 24px 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.65);
+    text-align: center;
+  }
+  .logo {
+    width: 56px; height: 56px; margin: 0 auto 14px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+    box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35);
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 19px; font-weight: 700; color: #f8fafc;
+  }
+  .msg {
+    font-size: 14px; line-height: 1.5; color: #94a3b8;
+    margin: 10px 0 18px; white-space: pre-line;
+  }
+  .msg.err { color: #f87171; }
+  .spinner {
+    width: 28px; height: 28px; margin: 12px auto;
+    border: 3px solid rgba(59, 130, 246, 0.25);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  input {
+    width: 100%; padding: 11px 13px;
+    background: #0b0f19; color: #f8fafc;
+    border: 1px solid #334155; border-radius: 10px;
+    font-size: 14px; outline: none; margin-bottom: 10px;
+  }
+  input:focus { border-color: #3b82f6; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    width: 100%; padding: 11px 14px; margin-top: 8px;
+    border-radius: 10px; border: 1px solid transparent;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    text-decoration: none; transition: opacity 0.15s;
+  }
+  .btn:active { opacity: 0.8; }
+  .btn-primary { background: #2563eb; color: #fff; }
+  .btn-emerald { background: #059669; color: #fff; }
+  .btn-ghost { background: #1e293b; border-color: #334155; color: #cbd5e1; font-size: 13px; }
+  .meta {
+    margin-top: 14px; font-size: 11px; color: #64748b;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">✦</div>
+  <h1>Vertex AI Chat</h1>
+  <div id="spinner" class="spinner"></div>
+  <div id="msg" class="msg">Поиск вашего компьютера и активного туннеля...</div>
+  <div id="formBox" hidden>
+    <input id="pairInput" type="text" placeholder="Вставьте ссылку с #pair=... или код" autocomplete="off">
+    <button id="pairBtn" class="btn btn-primary" type="button">🔗 Привязать устройство</button>
+  </div>
+  <div id="actionsBox" hidden>
+    <button id="retryBtn" class="btn btn-primary" type="button">🔄 Повторить сейчас</button>
+    <a id="directBtn" class="btn btn-emerald" href="#" hidden>🚀 Открыть туннель напрямую</a>
+    <button id="resetBtn" class="btn btn-ghost" type="button">🔑 Ввести новую ссылку #pair</button>
+  </div>
+  <div id="meta" class="meta">Постоянный адрес GitHub Pages</div>
+</div>
+
+<script>
+const store = {
+  get: k => { try { return localStorage.getItem('vertex_remote_' + k); } catch { return null; } },
+  set: (k, v) => { try { v == null ? localStorage.removeItem('vertex_remote_' + k) : localStorage.setItem('vertex_remote_' + k, v); } catch {} },
+};
+
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const b64u = s => b64(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+
+function parsePair(str) {
+  const m = /(?:[#?&]|^)pair=([A-Za-z0-9_-]{32,})\.([A-Za-z0-9_-]{12,})/.exec((str || '').trim());
+  return m ? { key: m[1], token: m[2] } : null;
+}
+
+// Проверяем #pair=<url_key>.<pair_token> в URL
+{
+  const p = parsePair(location.hash) || parsePair(location.search);
+  if (p) {
+    store.set('key', p.key);
+    store.set('token', p.token);
+  }
+  const tm = /[?&]thread=([a-f0-9-]{20,})/i.exec(location.search) || /[#&]thread=([a-f0-9-]{20,})/i.exec(location.hash);
+  if (tm) {
+    sessionStorage.setItem('vertex_target_thread', tm[1]);
+  }
+  if (p || tm) {
+    history.replaceState(null, '', location.pathname);
+  }
+}
+
+window.addEventListener('hashchange', () => {
+  const p = parsePair(location.hash);
+  if (p) {
+    store.set('key', p.key);
+    store.set('token', p.token);
+    history.replaceState(null, '', location.pathname);
+    boot();
+  }
+});
+
+let retryTimer = null;
+
+function showPairForm(errMsg = '') {
+  clearTimeout(retryTimer);
+  document.getElementById('spinner').hidden = true;
+  const msgEl = document.getElementById('msg');
+  msgEl.className = 'msg' + (errMsg ? ' err' : '');
+  msgEl.textContent = (errMsg ? errMsg + '\n\n' : '') + 'Это устройство ещё не привязано.\nОтсканируйте QR-код в окне 📱 внутри Vertex AI Chat (или запустите pair.ps1 на ПК) либо вставьте ссылку привязки ниже:';
+  document.getElementById('formBox').hidden = false;
+  document.getElementById('actionsBox').hidden = true;
+}
+
+async function decryptTunnelUrl(info, keyStr) {
+  const rawKey = b64u(keyStr);
+  const k = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['decrypt']);
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(info.iv) }, k, b64(info.data));
+  return JSON.parse(new TextDecoder().decode(plain)).url.replace(/\/+$/, '');
+}
+
+function buildTargetUrl(tunnelBase) {
+  const token = store.get('token') || '';
+  const key = store.get('key') || '';
+  const thread = sessionStorage.getItem('vertex_target_thread') || '';
+  const path = thread ? `/thread/${thread}` : '/';
+  return `${tunnelBase}${path}#pair=${key}.${token}`;
+}
+
+async function boot() {
+  clearTimeout(retryTimer);
+  const key = store.get('key');
+  const token = store.get('token');
+  if (!key || !token) {
+    return showPairForm();
+  }
+
+  document.getElementById('formBox').hidden = true;
+  document.getElementById('actionsBox').hidden = true;
+  document.getElementById('spinner').hidden = false;
+  const msgEl = document.getElementById('msg');
+  msgEl.className = 'msg';
+  msgEl.textContent = 'Получение актуального адреса туннеля с GitHub Pages...';
+
+  let info = null;
+  try {
+    const r = await fetch('url.json?t=' + Date.now(), { cache: 'no-store' });
+    if (r.ok) info = await r.json();
+  } catch {
+    document.getElementById('spinner').hidden = true;
+    msgEl.className = 'msg err';
+    msgEl.textContent = 'Не удалось загрузить url.json. Проверьте интернет на телефоне.';
+    document.getElementById('actionsBox').hidden = false;
+    return;
+  }
+
+  if (!info || !info.iv || !info.data) {
+    document.getElementById('spinner').hidden = true;
+    msgEl.className = 'msg err';
+    msgEl.textContent = 'Адрес туннеля ещё не опубликован.\nЗапустите Vertex AI Chat (start-remote.ps1 или кнопку 📱 в чате) и нажмите «Повторить».';
+    document.getElementById('actionsBox').hidden = false;
+    retryTimer = setTimeout(boot, 6000);
+    return;
+  }
+
+  let tunnelBase = '';
+  try {
+    tunnelBase = await decryptTunnelUrl(info, key);
+  } catch {
+    store.set('key', null);
+    store.set('token', null);
+    return showPairForm('Ключ шифрования изменился или устарел. Привяжите устройство заново.');
+  }
+
+  const targetUrl = buildTargetUrl(tunnelBase);
+  const directBtn = document.getElementById('directBtn');
+  directBtn.href = targetUrl;
+  directBtn.hidden = false;
+
+  if (info.updated) {
+    const mins = Math.max(0, Math.round((Date.now() - Date.parse(info.updated)) / 60000));
+    document.getElementById('meta').textContent = `Туннель обновлён: ${mins === 0 ? 'только что' : mins + ' мин. назад'}`;
+  }
+
+  msgEl.textContent = 'Проверка связи с ПК (' + tunnelBase.replace('https://', '') + ')...';
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5500);
+    const ping = await fetch(tunnelBase + '/api/remote/ping', { cache: 'no-store', signal: ctrl.signal });
+    clearTimeout(timer);
+    if (ping.ok) {
+      msgEl.textContent = 'Подключено! Переход в Vertex AI Chat...';
+      sessionStorage.removeItem('vertex_target_thread');
+      location.replace(targetUrl);
+      return;
+    }
+  } catch {}
+
+  document.getElementById('spinner').hidden = true;
+  msgEl.className = 'msg';
+  msgEl.textContent = 'Компьютер сейчас недоступен или туннель только что перезапустился (обновление GitHub Pages занимает ~30–60 сек).\nАвтоматический повтор каждые 5 секунд...';
+  document.getElementById('actionsBox').hidden = false;
+  retryTimer = setTimeout(boot, 5000);
+}
+
+document.getElementById('pairBtn').onclick = () => {
+  const val = document.getElementById('pairInput').value.trim();
+  const p = parsePair(val);
+  if (!p) {
+    return showPairForm('Неверный формат ссылки (должна содержать #pair=КЛЮЧ.ТОКЕН)');
+  }
+  store.set('key', p.key);
+  store.set('token', p.token);
+  boot();
+};
+
+document.getElementById('retryBtn').onclick = () => boot();
+document.getElementById('resetBtn').onclick = () => {
+  store.set('key', null);
+  store.set('token', null);
+  showPairForm();
+};
+
+boot();
+</script>
+</body>
+</html>
